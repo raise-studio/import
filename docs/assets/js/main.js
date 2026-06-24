@@ -15,7 +15,11 @@
   });
 
   // --- Language ---
-  const lang = localStorage.getItem('raise-import-lang') || 'en';
+  function detectBrowserLang() {
+    const navLang = (navigator.language || '').toLowerCase();
+    return navLang.startsWith('zh') ? 'zh' : 'en';
+  }
+  const lang = localStorage.getItem('raise-import-lang') || detectBrowserLang();
   document.documentElement.setAttribute('data-lang', lang);
 
   document.querySelectorAll('.lang-btn').forEach(btn => {
