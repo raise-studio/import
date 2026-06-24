@@ -281,6 +281,83 @@ class ImportLogResource extends Resource
                             ->required()
                             ->acceptedFileTypes(['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.oasis.opendocument.spreadsheetml.sheet', 'text/plain'])
                             ->maxSize(config('raise-import.max_file_size', 50) * 1024)
+                            ->live()
+                            ->afterStateUpdated(function ($state, $set, $get) {
+                                if (!$state) {
+                                    return;
+                                }
+
+                                // 1. Extension check (server-side, bypass-proof)
+                                $ext = strtolower(pathinfo(
+                                    is_string($state) ? basename($state) : ($state->getClientOriginalName() ?? ''),
+                                    PATHINFO_EXTENSION
+                                ));
+                                $allowed = config('raise-import.allowed_extensions', ['csv', 'xlsx', 'ods']);
+                                if ($ext && !in_array($ext, $allowed)) {
+                                    Notification::make()
+                                        ->danger()
+                                        ->title(__('raise-import::messages.errors.invalid_file'))
+                                        ->send();
+                                    $set('file', null);
+                                    return;
+                                }
+
+                                // 2. Server-side file size check (independent of Filament's client-side maxSize)
+                                $maxSizeMb = (int) config('raise-import.max_file_size', 50);
+                                $fileSizeBytes = is_string($state)
+                                    ? (($p = \Illuminate\Support\Facades\Storage::path($state)) && file_exists($p) ? filesize($p) : 0)
+                                    : $state->getSize();
+                                if ($fileSizeBytes > $maxSizeMb * 1048576) {
+                                    Notification::make()
+                                        ->danger()
+                                        ->title(__('raise-import::messages.errors.file_too_large', ['size' => $maxSizeMb]))
+                                        ->send();
+                                    $set('file', null);
+                                    return;
+                                }
+
+                                // Resolve full path for file-reading checks
+                                $fullPath = is_string($state)
+                                    ? \Illuminate\Support\Facades\Storage::path($state)
+                                    : $state->getRealPath();
+
+                                if (!$fullPath || !file_exists($fullPath)) {
+                                    return;
+                                }
+
+                                try {
+                                    // 3. Empty headers check
+                                    $reader = ReaderFactory::create($fullPath);
+                                    $headers = $reader->headers($fullPath);
+                                    if (empty($headers)) {
+                                        Notification::make()
+                                            ->danger()
+                                            ->title(__('raise-import::messages.errors.empty_file'))
+                                            ->send();
+                                        $set('file', null);
+                                        return;
+                                    }
+
+                                    // 4. No data rows check
+                                    $rowCount = $reader->count($fullPath);
+                                    if ($rowCount === 0) {
+                                        Notification::make()
+                                            ->danger()
+                                            ->title(__('raise-import::messages.errors.no_data'))
+                                            ->send();
+                                        $set('file', null);
+                                        return;
+                                    }
+                                } catch (\Throwable) {
+                                    // Reader construction failure = unreadable/corrupt file
+                                    Notification::make()
+                                        ->danger()
+                                        ->title(__('raise-import::messages.errors.invalid_file'))
+                                        ->send();
+                                    $set('file', null);
+                                    return;
+                                }
+                            })
                             ->helperText(__('raise-import::messages.import_log.re_import_hint_upload')),
                     ])
                     ->action(function (ImportLog $record, array $data) {
@@ -318,10 +395,45 @@ class ImportLogResource extends Resource
                             $fullPath = \Illuminate\Support\Facades\Storage::path($stored);
                         }
 
+                        // --- Server-side file validation (mirrors ImportAction::handleFileUpload) ---
+                        $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+                        $allowed = config('raise-import.allowed_extensions', ['csv', 'xlsx', 'ods']);
+                        if ($ext && !in_array($ext, $allowed)) {
+                            Notification::make()
+                                ->danger()
+                                ->title(__('raise-import::messages.errors.invalid_file'))
+                                ->send();
+                            return;
+                        }
+
+                        $maxSizeMb = (int) config('raise-import.max_file_size', 50);
+                        if (filesize($fullPath) > $maxSizeMb * 1048576) {
+                            Notification::make()
+                                ->danger()
+                                ->title(__('raise-import::messages.errors.file_too_large', ['size' => $maxSizeMb]))
+                                ->send();
+                            return;
+                        }
+
                         // Read file
                         $reader = ReaderFactory::create($fullPath);
                         $headers = $reader->headers($fullPath);
+                        if (empty($headers)) {
+                            Notification::make()
+                                ->danger()
+                                ->title(__('raise-import::messages.errors.empty_file'))
+                                ->send();
+                            return;
+                        }
+
                         $allRows = iterator_to_array($reader->rows($fullPath));
+                        if (count($allRows) === 0) {
+                            Notification::make()
+                                ->danger()
+                                ->title(__('raise-import::messages.errors.no_data'))
+                                ->send();
+                            return;
+                        }
 
                         // Reuse old config from meta
                         $rawMapping = $meta['mapping'] ?? [];
