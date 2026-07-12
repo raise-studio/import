@@ -141,7 +141,7 @@ ImportAction::make('import')
 
 ## Requirements
 
-- PHP 8.1+
+- PHP 8.2+
 - Filament 4.x or 5.x
 - Livewire 3.x (Filament 4) or 4.x (Filament 5)
 - OpenSpout 4.x
