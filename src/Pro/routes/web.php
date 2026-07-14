@@ -9,9 +9,6 @@ Route::middleware(['web', 'auth'])->prefix('raise-import')->name('raise-import.'
     Route::post('/preview', [ImportController::class, 'preview'])->name('preview');
     Route::post('/import', [ImportController::class, 'import'])->name('import');
 
-    // Template download
-    Route::get('/template/{modelClass}', [ImportController::class, 'template'])->name('template');
-
     // Error report download
     Route::get('/errors/{importLog}/download', [ImportController::class, 'downloadErrors'])->name('errors.download');
 });

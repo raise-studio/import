@@ -9,6 +9,7 @@ use Illuminate\Support\ServiceProvider;
 use RaiseStudio\License\FeatureGate;
 use RaiseStudio\License\LicenseClient;
 use RaiseStudio\License\Messages as LicenseMessages;
+use RaiseStudio\Import\License\LaravelLogger;
 use RaiseStudio\License\Adapters\Laravel\LaravelCache;
 use RaiseStudio\License\Adapters\Laravel\LaravelHttp;
 
@@ -42,9 +43,20 @@ class RaiseImportServiceProvider extends ServiceProvider
         // Auto-activate from .env if a license key is configured but not yet stored
         $this->autoActivateFromEnv();
 
+        // Free routes (e.g. template download) must always be registered,
+        // independent of the Pro license status.
+        $this->loadFreeRoutes();
+
         if (License::isPro()) {
             $this->bootProFeatures();
         }
+    }
+
+    protected function loadFreeRoutes(): void
+    {
+        $this->loadRoutesFrom(
+            __DIR__ . '/routes/web.php'
+        );
     }
 
     /**
@@ -62,7 +74,7 @@ class RaiseImportServiceProvider extends ServiceProvider
                 new LaravelHttp(),
                 $license['api_base_url'] ?? 'https://admin.raisestudio.dev/api/v1',
                 $this->resolveSiteUrl(),
-                null,
+                new LaravelLogger(),
                 $license['public_key_fingerprint'] ?? '',
             );
         });
@@ -71,6 +83,9 @@ class RaiseImportServiceProvider extends ServiceProvider
             $gate = new FeatureGate($app->make(LicenseClient::class));
             $gate->setFreeFeatures(config('raise-import.license.free_features', []));
             $gate->setAllProFeatures(config('raise-import.license.all_pro_features', []));
+            // Surface SDK diagnostics (signature / domain / expiry / activation)
+            // in the application log instead of the default silent NullLogger.
+            $gate->setLogger(new LaravelLogger());
 
             return $gate;
         });
@@ -138,7 +153,8 @@ class RaiseImportServiceProvider extends ServiceProvider
             return;
         }
 
-        // Attempt auto-activation (silent — no user-facing errors)
+        // Attempt auto-activation
+        $siteUrl = $this->resolveSiteUrl();
         try {
             $result = $client->activate(
                 $licenseKey,
@@ -146,12 +162,23 @@ class RaiseImportServiceProvider extends ServiceProvider
             );
 
             if ($result['success']) {
-                logger()->info('[raise-import] License auto-activated from .env');
+                $features = [];
+                try {
+                    $features = $client->getFeatures();
+                } catch (\Throwable $e) {
+                    // ignore — not required for the log line
+                }
+                logger()->info('[raise-import] License auto-activated OK (site=' . $siteUrl
+                    . ', features=' . implode(',', $features) . ')');
             } else {
-                logger()->warning('[raise-import] License auto-activation failed: ' . $result['message']);
+                $reason = $result['message'] ?? 'unknown error';
+                $code = isset($result['code']) ? ' [code=' . $result['code'] . ']' : '';
+                logger()->warning('[raise-import] License auto-activation FAILED: ' . $reason . $code
+                    . ' (site=' . $siteUrl . ')');
             }
         } catch (\Throwable $e) {
-            logger()->warning('[raise-import] License auto-activation exception: ' . $e->getMessage());
+            logger()->warning('[raise-import] License auto-activation exception: ' . $e->getMessage()
+                . ' (site=' . $siteUrl . ')');
         }
     }
 

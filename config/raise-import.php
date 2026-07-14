@@ -31,6 +31,7 @@ return [
     |   RAISE_IMPORT_API_URL        — 授权服务器地址（默认已配好）
     |   RAISE_IMPORT_LICENSE_LOCALE — 'zh' | 'en'
     |   RAISE_IMPORT_INTEGRITY_DISABLED — 调试用，生产务必 false
+    |   RAISE_IMPORT_LICENSE_SDK_DEBUG — true 时输出 SDK 逐步排障日志（失败原因 warning/error 默认已输出）
     |
     | NOTE: 授权判定完全由「实际访问域名 + 该域名是否绑定有效 License」
     | 决定，任何配置值（APP_ENV/APP_URL/force_community）都无法绕过。
@@ -49,6 +50,9 @@ return [
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
         'integrity_version'  => '1.0.0',
         'integrity_hashes'   => [],
+        // Set true (RAISE_IMPORT_LICENSE_SDK_DEBUG=true) to also log the SDK's
+        // per-step debug tracing. Failure reasons (warning/error) are always logged.
+        'sdk_debug'          => env('RAISE_IMPORT_LICENSE_SDK_DEBUG', false),
         'locale'             => env('RAISE_IMPORT_LICENSE_LOCALE', 'zh'),
         'free_features'      => [
             'basic_import',

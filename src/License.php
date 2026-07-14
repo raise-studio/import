@@ -36,16 +36,20 @@ class License
             return self::$cache;
         }
 
+        $host = self::resolveActualHost();
+
         // Local access (site actually reached via loopback) is auto-authorized.
         // This is decided by the REAL accessed domain — NOT by APP_ENV or
         // APP_URL config — so a production server cannot spoof a local bypass
         // by setting APP_ENV=local or APP_URL=localhost.
         if (self::isLocalAccess()) {
+            self::logLicense('info', 'Pro ACTIVE via local-access bypass (host=' . $host . ')');
             return self::$cache = true;
         }
 
         // Integrity self-check — refuse Pro if gatekeeper files are tampered
         if (!self::isIntegrityValid()) {
+            self::logLicense('warning', 'Pro INACTIVE — integrity self-check failed (host=' . $host . ')');
             return self::$cache = false;
         }
 
@@ -54,12 +58,28 @@ class License
         // real request host), so Pro is granted ONLY when the current domain
         // is bound to a valid license.
         $gate = self::resolveFeatureGate();
-        if ($gate !== null) {
-            return self::$cache = $gate->canUse('*');
+        if ($gate === null) {
+            self::logLicense('warning', 'Pro INACTIVE — license client / feature gate unavailable in container (host=' . $host . ')');
+            return self::$cache = false;
         }
 
-        // Fallback: no SDK registered — conservative, return false
-        return self::$cache = false;
+        $active = $gate->canUse('*');
+        if ($active) {
+            $features = [];
+            try {
+                $client = self::resolveClient();
+                if ($client !== null) {
+                    $features = $client->getFeatures();
+                }
+            } catch (\Throwable $e) {
+                // ignore — features are only for the log line
+            }
+            self::logLicense('info', 'Pro ACTIVE (host=' . $host . ', features=' . implode(',', $features) . ')');
+        } else {
+            self::logLicense('warning', 'Pro INACTIVE (host=' . $host . ') — see "[raise-import][sdk]" logs above for the exact reason (signature invalid / domain not bound / expired / not activated).');
+        }
+
+        return self::$cache = $active;
     }
 
     /**
@@ -72,18 +92,26 @@ class License
      */
     public static function gatePro(): bool
     {
+        $host = self::resolveActualHost();
+
         if (self::isLocalAccess()) {
             return true;
         }
 
         // Integrity self-check — refuse Pro if gatekeeper files are tampered
         if (!self::isIntegrityValid()) {
+            self::logLicense('warning', 'gatePro DENIED — integrity self-check failed (host=' . $host . ')');
             return false;
         }
 
         $gate = self::resolveFeatureGate();
+        $allowed = $gate !== null && $gate->canUse('*');
 
-        return $gate !== null && $gate->canUse('*');
+        if (! $allowed) {
+            self::logLicense('warning', 'gatePro DENIED (host=' . $host . ') — see "[raise-import][sdk]" logs for the reason.');
+        }
+
+        return $allowed;
     }
 
     /**
@@ -302,6 +330,19 @@ class License
         }
 
         return 'unknown';
+    }
+
+    /**
+     * Log a license decision event without ever throwing.
+     */
+    private static function logLicense(string $level, string $message): void
+    {
+        try {
+            $method = in_array($level, ['debug', 'info', 'warning', 'error'], true) ? $level : 'info';
+            \Illuminate\Support\Facades\Log::{$method}('[raise-import] License: ' . $message);
+        } catch (\Throwable $e) {
+            // logging must never break the application
+        }
     }
 
     /**

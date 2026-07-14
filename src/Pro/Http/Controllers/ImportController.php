@@ -5,8 +5,6 @@ namespace RaiseStudio\Import\Pro\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Storage;
-use RaiseStudio\Import\Exports\TemplateExport;
-use RaiseStudio\Import\Fields\Field;
 use RaiseStudio\Import\License;
 use RaiseStudio\Import\Pro\Models\ImportLog;
 use RaiseStudio\Import\Readers\ReaderFactory;
@@ -172,29 +170,6 @@ class ImportController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
-    }
-
-    /**
-     * Download template CSV for a model class.
-     */
-    public function template(string $modelClass)
-    {
-        $modelClass = str_replace('_', '\\', $modelClass);
-
-        if (!class_exists($modelClass)) {
-            abort(404, "Model class {$modelClass} not found.");
-        }
-
-        $model = new $modelClass();
-        $fillable = $model->getFillable();
-
-        $fields = array_map(function ($column) {
-            return Field::make($column)->label(ucwords(str_replace('_', ' ', $column)));
-        }, $fillable);
-
-        $export = new TemplateExport();
-
-        return $export->download($fields, 'import-template.csv');
     }
 
     /**
