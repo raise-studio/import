@@ -37,7 +37,9 @@ class License
         }
 
         // Force community mode for testing
-        if (config('raise-import.license.force_community', false)) {
+        $forceCommunity = config('raise-import.license.force_community', false)
+            ?: config('raise-import.force_community', false); // backward compat
+        if ($forceCommunity) {
             return self::$cache = false;
         }
 
@@ -46,10 +48,15 @@ class License
             return self::$cache = true;
         }
 
+        // Integrity self-check — refuse Pro if gatekeeper files are tampered
+        if (!self::isIntegrityValid()) {
+            return self::$cache = false;
+        }
+
         // Delegates to SDK: FeatureGate::canUse('*') = isPro()
         $gate = self::resolveFeatureGate();
         if ($gate !== null) {
-            return self::$cache = $gate->isPro();
+            return self::$cache = $gate->canUse('*');
         }
 
         // Fallback: no SDK registered — conservative, return false
@@ -66,7 +73,9 @@ class License
      */
     public static function gatePro(): bool
     {
-        if (config('raise-import.license.force_community', false)) {
+        $forceCommunity = config('raise-import.license.force_community', false)
+            ?: config('raise-import.force_community', false);
+        if ($forceCommunity) {
             return false;
         }
 
@@ -74,9 +83,14 @@ class License
             return true;
         }
 
+        // Integrity self-check — refuse Pro if gatekeeper files are tampered
+        if (!self::isIntegrityValid()) {
+            return false;
+        }
+
         $gate = self::resolveFeatureGate();
 
-        return $gate !== null && $gate->isPro();
+        return $gate !== null && $gate->canUse('*');
     }
 
     /**
@@ -108,16 +122,22 @@ class License
             return self::$integrityCache;
         }
 
-        if (config('raise-import.license.integrity_disabled', false)) {
+        $disabled = config('raise-import.license.integrity_disabled', false)
+            ?: config('raise-import.integrity_disabled', false);
+        if ($disabled) {
             return self::$integrityCache = true;
         }
 
         $expected = config('raise-import.license.integrity_hashes', []);
+        if (empty($expected)) {
+            $expected = config('raise-import.integrity_hashes', []);
+        }
         if (!is_array($expected) || $expected === []) {
             return self::$integrityCache = true;
         }
 
-        $shippedVersion = config('raise-import.license.integrity_version');
+        $shippedVersion = config('raise-import.license.integrity_version')
+            ?: config('raise-import.integrity_version', '');
         if ($shippedVersion && $shippedVersion !== self::packageVersion()) {
             self::logIntegrity('version mismatch (' . $shippedVersion . ' != ' . self::packageVersion() . '), skipping');
             return self::$integrityCache = true;
@@ -205,8 +225,7 @@ class License
     private static function containerReady(): bool
     {
         return class_exists(\Illuminate\Support\Facades\App::class)
-            && !app()->runningUnitTests()
-            && app()->bound(LicenseClient::class);
+            && (app()->bound(LicenseClient::class) || app()->bound(FeatureGate::class));
     }
 
     /**

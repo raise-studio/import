@@ -2,11 +2,11 @@
 
 namespace RaiseStudio\Import\Tests\Unit\Pro;
 
-use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use RaiseStudio\Import\License;
 use RaiseStudio\Import\Tests\TestCase;
+use RaiseStudio\License\FeatureGate;
+use RaiseStudio\License\LicenseClient;
 
 class LicenseTest extends TestCase
 {
@@ -15,10 +15,6 @@ class LicenseTest extends TestCase
         parent::setUp();
         License::flushCache();
         Cache::flush();
-
-        // Default config for online tests
-        config()->set('raise-import.license_verify_url', 'https://license.test/api/license/verify');
-        config()->set('raise-import.license_secret', 'test-shared-secret');
     }
 
     protected function tearDown(): void
@@ -27,6 +23,10 @@ class LicenseTest extends TestCase
         Cache::flush();
         parent::tearDown();
     }
+
+    /* ---------------------------------------------------------------------
+     | Local environment auto-exemption
+     |--------------------------------------------------------------------- */
 
     /** @test */
     public function it_returns_true_in_local_environment()
@@ -42,7 +42,6 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'http://localhost');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertTrue(License::isPro());
@@ -53,7 +52,6 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'http://127.0.0.1:8000');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertTrue(License::isPro());
@@ -62,10 +60,8 @@ class LicenseTest extends TestCase
     /** @test */
     public function it_returns_false_for_local_tld_after_tightening()
     {
-        // .test TLD is no longer exempt — only loopback hosts are.
         app()['env'] = 'production';
         config()->set('app.url', 'http://myapp.test');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertFalse(License::isPro());
@@ -74,10 +70,8 @@ class LicenseTest extends TestCase
     /** @test */
     public function it_returns_false_for_private_ip_after_tightening()
     {
-        // Private RFC1918 ranges are no longer exempt — only loopback hosts are.
         app()['env'] = 'production';
         config()->set('app.url', 'http://192.168.1.100');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertFalse(License::isPro());
@@ -88,124 +82,95 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', null);
+
+        License::flushCache();
+        $this->assertFalse(License::isPro());
+    }
+
+    /* ---------------------------------------------------------------------
+     | SDK delegation — mock LicenseClient / FeatureGate
+     |--------------------------------------------------------------------- */
+
+    /** @test */
+    public function it_returns_true_when_feature_gate_grants_pro()
+    {
+        app()['env'] = 'production';
+        config()->set('app.url', 'https://example.com');
+
+        License::flushCache();
+
+        // Setup mock AFTER flushCache (which clears container instances)
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(true);
+        $this->app->instance(FeatureGate::class, $gate);
+
+        $this->assertTrue(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_false_when_feature_gate_denies_pro()
+    {
+        app()['env'] = 'production';
+        config()->set('app.url', 'https://example.com');
+
+        License::flushCache();
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(false);
+        $this->app->instance(FeatureGate::class, $gate);
+
+        $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function it_sends_correct_params_to_client_when_checking_pro()
+    {
+        app()['env'] = 'production';
+        config()->set('app.url', 'https://example.com');
+
+        License::flushCache();
+
+        $client = $this->getMockBuilder(LicenseClient::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['getStoredLicenseKey', 'getPayload', 'isPro'])
+            ->getMock();
+        $client->method('getStoredLicenseKey')->willReturn(null);
+        $client->method('getPayload')->willReturn(null);
+        $client->method('isPro')->willReturn(false);
+        $this->app->instance(LicenseClient::class, $client);
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(false);
+        $this->app->instance(FeatureGate::class, $gate);
+
+        $this->assertFalse(License::isPro());
+    }
+
+    /* ---------------------------------------------------------------------
+     | Force community config
+     |--------------------------------------------------------------------- */
+
+    /** @test */
+    public function it_respects_force_community_config_new_key()
+    {
+        app()['env'] = 'local';
+        config()->set('raise-import.license.force_community', true);
 
         License::flushCache();
         $this->assertFalse(License::isPro());
     }
 
     /** @test */
-    public function it_returns_false_when_server_rejects_key()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'some-license-key');
-
-        Http::fake([
-            'license.test/*' => Http::response(['valid' => false, 'reason' => 'invalid'], 403),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_sends_license_key_site_url_and_product_to_verify_server()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'my-license-key');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-
-        Http::assertSent(function (Request $request) {
-            return $request->url() === 'https://license.test/api/license/verify'
-                && $request['license_key'] === 'my-license-key'
-                && $request['site_url'] === 'https://example.com'
-                && $request['product'] === 'raise-import';
-        });
-    }
-
-    /** @test */
-    public function it_returns_true_when_server_validates_key()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'valid-license-key');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_uses_cached_validation_when_server_is_unreachable()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'cached-key');
-
-        // First call: server is up → cache the result
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-
-        // Second call: server is down → should use cache
-        License::flushCache();
-        Http::fake([
-            'license.test/*' => function () {
-                throw new \Illuminate\Http\Client\ConnectionException('Connection refused');
-            },
-        ]);
-
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_false_when_server_is_unreachable_and_no_cache_exists()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'some-key');
-
-        Http::fake([
-            'license.test/*' => function () {
-                throw new \Illuminate\Http\Client\ConnectionException('Connection refused');
-            },
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_respects_force_community_config()
+    public function it_respects_force_community_config_legacy_key()
     {
         app()['env'] = 'local';
         config()->set('raise-import.force_community', true);
@@ -214,18 +179,21 @@ class LicenseTest extends TestCase
         $this->assertFalse(License::isPro());
     }
 
+    /* ---------------------------------------------------------------------
+     | Static cache behavior
+     |--------------------------------------------------------------------- */
+
     /** @test */
     public function it_caches_result_and_does_not_revalidate()
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertFalse(License::isPro());
 
-        // Changing config after cache should not affect result
-        config()->set('raise-import.license_key', 'something-else');
+        // Changing env after cache should not affect result
+        app()['env'] = 'local';
         $this->assertFalse(License::isPro());
     }
 
@@ -234,7 +202,6 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', null);
 
         License::flushCache();
         $this->assertFalse(License::isPro());
@@ -244,19 +211,9 @@ class LicenseTest extends TestCase
         $this->assertTrue(License::isPro());
     }
 
-    private function signedResponse(array $data, string $secret = 'test-shared-secret'): array
-    {
-        $canonical = sprintf(
-            '%s|%s|%s|%s',
-            var_export($data['valid'] ?? false, true),
-            $data['domain'] ?? '',
-            $data['expires_at'] ?? '',
-            $data['edition'] ?? ''
-        );
-        $data['signature'] = hash_hmac('sha256', $canonical, $secret);
-
-        return $data;
-    }
+    /* ---------------------------------------------------------------------
+     | Integrity self-check
+     |--------------------------------------------------------------------- */
 
     private function currentHashes(): array
     {
@@ -292,160 +249,11 @@ class LicenseTest extends TestCase
     }
 
     /** @test */
-    public function it_rejects_response_without_signature()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        Http::fake([
-            'license.test/*' => Http::response([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ]),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_rejects_response_with_wrong_signature()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        $signed = $this->signedResponse([
-            'valid' => true,
-            'domain' => 'example.com',
-            'expires_at' => time() + 86400,
-            'edition' => 'pro',
-        ]);
-        $signed['signature'] = 'forged-signature';
-
-        Http::fake([
-            'license.test/*' => Http::response($signed),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_rejects_when_domain_does_not_match()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'other-site.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_rejects_when_edition_is_not_pro()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'community',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_accepts_wildcard_subdomain_binding()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://app.example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => '*.example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_rejects_bare_domain_for_wildcard_binding()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => '*.example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_rejects_when_no_shared_secret_is_configured()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'k');
-        config()->set('raise-import.license_secret', '');
-
-        // Even a perfectly signed response cannot be trusted without the secret
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /* ---------------------------------------------------------------------
-     | Integrity self-check
-     |--------------------------------------------------------------------- */
-
-    /** @test */
     public function integrity_passes_with_correct_hashes()
     {
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', $this->currentHashes());
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', $this->currentHashes());
 
         License::flushCache();
         $this->assertTrue(License::isIntegrityValid());
@@ -457,9 +265,9 @@ class LicenseTest extends TestCase
         $hashes = $this->currentHashes();
         $hashes['src/License.php'] = 'deadbeef';
 
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', $hashes);
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', $hashes);
 
         License::flushCache();
         $this->assertFalse(License::isIntegrityValid());
@@ -469,11 +277,11 @@ class LicenseTest extends TestCase
     public function integrity_skips_when_disabled()
     {
         $hashes = $this->currentHashes();
-        $hashes['src/License.php'] = 'deadbeef'; // would fail if checked
+        $hashes['src/License.php'] = 'deadbeef';
 
-        config()->set('raise-import.integrity_disabled', true);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', $hashes);
+        config()->set('raise-import.license.integrity_disabled', true);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', $hashes);
 
         License::flushCache();
         $this->assertTrue(License::isIntegrityValid());
@@ -482,8 +290,8 @@ class LicenseTest extends TestCase
     /** @test */
     public function integrity_skips_when_no_hashes_configured()
     {
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_hashes', []);
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_hashes', []);
 
         License::flushCache();
         $this->assertTrue(License::isIntegrityValid());
@@ -493,11 +301,11 @@ class LicenseTest extends TestCase
     public function integrity_skips_on_version_mismatch()
     {
         $hashes = $this->currentHashes();
-        $hashes['src/License.php'] = 'deadbeef'; // would fail if checked
+        $hashes['src/License.php'] = 'deadbeef';
 
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', '9.9.9-mismatch');
-        config()->set('raise-import.integrity_hashes', $hashes);
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', '9.9.9-mismatch');
+        config()->set('raise-import.license.integrity_hashes', $hashes);
 
         License::flushCache();
         $this->assertTrue(License::isIntegrityValid());
@@ -506,9 +314,9 @@ class LicenseTest extends TestCase
     /** @test */
     public function integrity_fails_when_gatekeeper_file_is_missing()
     {
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', [
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', [
             'src/License.php' => 'ok',
             'src/MissingFile.php' => 'ok',
         ]);
@@ -522,26 +330,54 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'valid-license-key');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
-
-        // Server says valid, but a gatekeeper file hash is wrong → refuse Pro.
-        $hashes = $this->currentHashes();
-        $hashes['src/License.php'] = 'tampered';
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', $hashes);
 
         License::flushCache();
+
+        // Mock LicenseClient to return a valid payload (simulating valid license)
+        // The real FeatureGate will check integrity and return false when broken
+        $client = $this->getMockBuilder(LicenseClient::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['getPayload'])
+            ->getMock();
+        $client->method('getPayload')->willReturn((object) [
+            'features' => ['advanced_mapping', 'queue', 'import_log', 'merge_split', 'pipeline'],
+        ]);
+        $this->app->instance(LicenseClient::class, $client);
+
+        // Use real FeatureGate (re-register so it picks up the mocked client)
+        $gate = new FeatureGate($client);
+        $gate->setFreeFeatures(config('raise-import.license.free_features', []));
+        $gate->setAllProFeatures(config('raise-import.license.all_pro_features', []));
+        $this->app->instance(FeatureGate::class, $gate);
+
+        // Set broken integrity hashes
+        $hashes = $this->currentHashes();
+        $hashes['src/License.php'] = 'tampered';
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', $hashes);
+
         $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function integrity_does_not_affect_is_pro_when_hashes_empty()
+    {
+        app()['env'] = 'production';
+        config()->set('app.url', 'https://example.com');
+
+        License::flushCache();
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(true);
+        $this->app->instance(FeatureGate::class, $gate);
+
+        config()->set('raise-import.license.integrity_hashes', []);
+
+        $this->assertTrue(License::isPro());
     }
 
     /* ---------------------------------------------------------------------
@@ -549,22 +385,20 @@ class LicenseTest extends TestCase
      |--------------------------------------------------------------------- */
 
     /** @test */
-    public function gate_pro_returns_true_with_valid_key_and_integrity()
+    public function gate_pro_returns_true_when_feature_gate_grants()
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'valid-key');
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
 
         License::flushCache();
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(true);
+        $this->app->instance(FeatureGate::class, $gate);
+
         $this->assertTrue(License::gatePro());
     }
 
@@ -573,17 +407,7 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'valid-key');
         config()->set('raise-import.force_community', true);
-
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
 
         License::flushCache();
         $this->assertFalse(License::gatePro());
@@ -594,51 +418,63 @@ class LicenseTest extends TestCase
     {
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', 'valid-key');
 
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
+        License::flushCache();
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(true);
+        $this->app->instance(FeatureGate::class, $gate);
 
         $hashes = $this->currentHashes();
         $hashes['src/License.php'] = 'tampered';
-        config()->set('raise-import.integrity_disabled', false);
-        config()->set('raise-import.integrity_version', $this->currentVersion());
-        config()->set('raise-import.integrity_hashes', $hashes);
+        config()->set('raise-import.license.integrity_disabled', false);
+        config()->set('raise-import.license.integrity_version', $this->currentVersion());
+        config()->set('raise-import.license.integrity_hashes', $hashes);
 
-        License::flushCache();
         $this->assertFalse(License::gatePro());
     }
 
     /** @test */
     public function gate_pro_revalidates_independently_of_ispro_cache()
     {
-        // A patched isPro() (simulated by a cached false result) is not
-        // enough to unlock features — gatePro() re-validates on its own.
         app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.license_key', null);
+
+        // isPro() caches false
+        License::flushCache();
+        $this->assertFalse(License::isPro());
+
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(true);
+        $this->app->instance(FeatureGate::class, $gate);
+
+        // isPro() still cached false
+        $this->assertFalse(License::isPro());
+        // gatePro() does fresh check → true
+        $this->assertTrue(License::gatePro());
+    }
+
+    /** @test */
+    public function gate_pro_returns_false_when_feature_gate_denies()
+    {
+        app()['env'] = 'production';
+        config()->set('app.url', 'https://example.com');
 
         License::flushCache();
-        $this->assertFalse(License::isPro()); // caches false
 
-        // Now supply a valid key + server, WITHOUT flushing isPro()'s cache.
-        config()->set('raise-import.license_key', 'valid-key');
-        Http::fake([
-            'license.test/*' => Http::response($this->signedResponse([
-                'valid' => true,
-                'domain' => 'example.com',
-                'expires_at' => time() + 86400,
-                'edition' => 'pro',
-            ])),
-        ]);
+        $gate = $this->getMockBuilder(FeatureGate::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['canUse'])
+            ->getMock();
+        $gate->method('canUse')->with('*')->willReturn(false);
+        $this->app->instance(FeatureGate::class, $gate);
 
-        $this->assertFalse(License::isPro()); // still cached false
-        $this->assertTrue(License::gatePro()); // independent fresh check → true
+        $this->assertFalse(License::gatePro());
     }
 }
