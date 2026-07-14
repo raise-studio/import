@@ -63,7 +63,7 @@ class LaravelLogger implements LoggerInterface
      */
     private function sanitize(array $context): array
     {
-        $sensitive = ['license_key', 'licensekey', 'token', 'jwt', 'key', 'private_key', 'secret', 'password'];
+        $sensitive = ['license_key', 'licensekey', 'token', 'jwt', 'key', 'private_key', 'secret', 'password', 'public_key'];
         foreach ($context as $key => $value) {
             if (is_string($key)
                 && in_array(strtolower($key), $sensitive, true)

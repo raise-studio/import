@@ -64,19 +64,23 @@ class License
         }
 
         $active = $gate->canUse('*');
-        if ($active) {
-            $features = [];
-            try {
-                $client = self::resolveClient();
-                if ($client !== null) {
-                    $features = $client->getFeatures();
-                }
-            } catch (\Throwable $e) {
-                // ignore — features are only for the log line
+        $features = [];
+        $reason  = 'unknown';
+        try {
+            $client = self::resolveClient();
+            if ($client !== null) {
+                $features = $client->getFeatures();
             }
+        } catch (\Throwable $e) {
+            // ignore — features are only for the log line
+        }
+        if ($active) {
             self::logLicense('info', 'Pro ACTIVE (host=' . $host . ', features=' . implode(',', $features) . ')');
         } else {
-            self::logLicense('warning', 'Pro INACTIVE (host=' . $host . ') — see "[raise-import][sdk]" logs above for the exact reason (signature invalid / domain not bound / expired / not activated).');
+            $reason = empty($features)
+                ? 'features_empty (JWT has no Pro features for this domain)'
+                : 'see_sdk_logs (payload present but gate denied)';
+            self::logLicense('warning', 'Pro INACTIVE (host=' . $host . ', features=' . implode(',', $features) . ', reason=' . $reason . ') — see "[raise-import][sdk]" logs above for the exact reason (signature invalid / domain not bound / expired / not activated).');
         }
 
         return self::$cache = $active;
