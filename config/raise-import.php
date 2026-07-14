@@ -39,7 +39,7 @@ return [
         'key'                => env('RAISE_IMPORT_LICENSE_KEY', ''),
         'email'              => env('RAISE_IMPORT_LICENSE_EMAIL', ''),
         'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'import-for-filament'),
-        'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', ''),
+        'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0NCk1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBcFVIOTdrRjl0aThjZHhOT00vVDQNCmtoODMwREY3MnMzUlhib2NxQXZKTkhXbzJ0NkJtbk43Zk9aNDNjMTQ0WVNObTd4aFFSSHQyZlVMelNMKy8wRUsNClhRMCtYdEJqTUc3ZS9VaEdtMHRhLy9UdGtLRndwbmV1UGcwckFqa293U3AxRWljN2lxemtHSk9RZTNDa0NsT1MNCkVydFh6UGpSYzZaRUFBRWRpSi8rNUtacFg3TUU0bDNOUUNUWDNxbDg1MzVxanI4ZkJjeTJ4SGJYdm1EMnRXL24NCndpVEJOTHJBQTdobTNjWXkvK0R1MVlacWk5dk03dXpCV2MwanFOK0trbUwzMXNCckFLTTVUYlZBQzdrU2JDRXUNCjBoeXNyaVptNTBXOG5jUWdQZ2pNM05KT2cydW93WlhoSkRZRjF2Q1NOdGg3dXFqaE9zOGo4MDh1UDJha0pNSS8NCk93SURBUUFCDQotLS0tLUVORCBQVUJMSUMgS0VZLS0tLS0NCg=='),
         'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
         'integrity_version'  => '1.0.0',
