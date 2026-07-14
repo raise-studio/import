@@ -37,7 +37,8 @@ class ProcessImportJob implements ShouldQueue
 
     public function handle(): void
     {
-        if (!License::isPro()) {
+        // Independent Pro gate — re-validates even if isPro() was patched.
+        if (!License::gatePro()) {
             $this->fail(new \Exception('Pro license required'));
 
             return;

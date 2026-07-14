@@ -36,7 +36,8 @@ class ProImportAction extends ImportAction
     {
         parent::setUp();
 
-        if (!License::isPro()) {
+        // Independent Pro gate — re-validates even if isPro() was patched.
+        if (!License::gatePro()) {
             abort(403, 'This feature requires Raise Import Pro license.');
         }
 
@@ -279,6 +280,17 @@ class ProImportAction extends ImportAction
 
     public function handle(array $data): void
     {
+        // Independent Pro gate — re-validates even if isPro() was patched.
+        if (!License::gatePro()) {
+            Notification::make()
+                ->danger()
+                ->title('Pro license required')
+                ->body('This feature requires a valid Raise Import Pro license.')
+                ->send();
+
+            return;
+        }
+
         try {
             $rawMapping = $data['column_mapping'] ?? [];
             $duplicateBehavior = $data['duplicate_behavior'] ?? $this->onDuplicate->value;
@@ -443,7 +455,7 @@ class ProImportAction extends ImportAction
 
             // Create import log (Pro feature)
             $importLog = null;
-            if (License::isPro()) {
+            if (License::gatePro()) {
                 $importLog = ImportLog::create([
                     'user_id' => auth()->id(),
                     'model_class' => $this->modelClass,

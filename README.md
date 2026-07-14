@@ -174,13 +174,112 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ## Pro License
 
-To unlock Pro features, set your license key in `.env`:
+To unlock Pro features, set your license key (and the shared server secret) in `.env`:
 
 ```bash
 RAISE_IMPORT_LICENSE_KEY=your-license-key-here
+RAISE_IMPORT_LICENSE_SECRET=shared-hmac-secret
+RAISE_IMPORT_LICENSE_PRODUCT=raise-import
 ```
 
+- `RAISE_IMPORT_LICENSE_KEY` — your Pro license key.
+- `RAISE_IMPORT_LICENSE_SECRET` — HMAC secret shared with `raise-license-server`
+  (must equal the server's `LICENSE_SIGNATURE_KEY`). Without it, the plugin
+  rejects **any** positive verification response, so a forged/relayed license
+  endpoint cannot fake a valid license.
+- `RAISE_IMPORT_LICENSE_PRODUCT` — product slug sent to the server during
+  verification. Must match a Product slug on `raise-license-server`.
+
 Get a license at [https://raise-studio.com](https://raise-studio.com)
+
+### Verification request & response contract
+
+The plugin `POST`s to `RAISE_IMPORT_LICENSE_VERIFY_URL` with:
+
+```json
+{
+  "license_key": "your-license-key-here",
+  "site_url": "https://example.com",
+  "product": "raise-import"
+}
+```
+
+The endpoint must return JSON signed with HMAC-SHA256 over
+`valid|domain|expires_at|edition` (where `valid` is the literal `true`/`false`):
+
+```json
+{
+  "valid": true,
+  "domain": "example.com",
+  "expires_at": "2026-12-31",
+  "edition": "pro",
+  "signature": "HMAC_SHA256('true|example.com|2026-12-31|pro', SECRET)"
+}
+```
+
+The plugin verifies the signature, enforces that `edition === 'pro'`, and locks
+the key to the returned `domain` (supports `*.example.com` wildcard for
+subdomains).
+
+**Local exemption is intentionally narrow.** Only loopback hosts
+(`localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0`) get Pro features without a key.
+`*.test` / `*.local` TLDs and private IP ranges (`10.x`, `172.16–31.x`,
+`192.168.x`) are **no longer** exempt — they must present a valid license, just
+like production. This tightens the free-Pro surface (see strategy note
+2026-07-07: 收敛豁免).
+
+### Distributed gate (defense in depth)
+
+Each Pro feature execution point (the `ProImportAction` wizard setup/run, the
+queued `ProcessImportJob`, and the `ImportController`) calls `License::gatePro()`
+**directly** instead of relying solely on the cached `License::isPro()` result.
+`gatePro()` never reads the static `isPro()` cache and re-evaluates the license
+on its own (key validity + signature + domain lock + integrity self-check).
+This means patching `isPro()` to always return `true` is insufficient to unlock
+the actual Pro features — every critical file re-checks independently.
+
+### Integrity self-check (tamper deterrent)
+
+In addition to online verification, the plugin verifies that its own Pro
+gatekeeper files (`License.php`, `ProImportAction.php`,
+`RaiseImportServiceProvider.php`) have not been patched to force Pro mode. Each
+file's SHA-256 is compared against an expected value shipped in the config. If a
+file's hash does not match, Pro features are refused and the installation
+**silently falls back to Community mode** (with a `warning` log entry) — it never
+crashes.
+
+This is a deterrent, not a hard lock: PHP source always lives on the client's
+machine, so a determined attacker can still bypass it. It raises the cost of
+patching the license gate.
+
+Configure it in `config/raise-import.php` (or `.env`):
+
+```php
+'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
+'integrity_version'  => '1.0.0',
+'integrity_hashes'   => [
+    'src/License.php' => '...',
+    'src/Pro/Actions/ProImportAction.php' => '...',
+    'src/RaiseImportServiceProvider.php' => '...',
+],
+```
+
+- `RAISE_IMPORT_INTEGRITY_DISABLED=true` — disable the check entirely
+  (for legitimate debugging or when you intentionally patch the source).
+- `integrity_version` must match the installed package version. If it does
+  not (e.g. you upgraded without regenerating hashes), the check is **skipped**
+  rather than forcing legitimate users into Community mode.
+- Empty `integrity_hashes` → check is **skipped** (graceful default). This is
+  the shipped state, so the feature does nothing until you opt in.
+
+Regenerate the hashes for every release with the included command:
+
+```bash
+php artisan raise-import:integrity:rehash
+```
+
+It prints the version and the exact `integrity_version` / `integrity_hashes`
+block to paste into `config/raise-import.php`.
 
 ## License
 

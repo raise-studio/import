@@ -36,8 +36,38 @@ return [
     */
     'license_verify_url' => env(
         'RAISE_IMPORT_LICENSE_VERIFY_URL',
-        'https://license.raise-studio.com/api/license/verify'
+        'https://license.raisestudio.dev/api/v1/verify'
     ),
+
+    /*
+    |--------------------------------------------------------------------------
+    | License Server Shared Secret
+    |--------------------------------------------------------------------------
+    |
+    | Shared HMAC secret used to verify the signature returned by the license
+    | server. MUST match the value configured on raise-license-server.
+    |
+    | Without this secret, the plugin cannot trust any positive verification
+    | response — a forged or relayed endpoint returning `valid:true` will be
+    | rejected because it cannot produce a valid HMAC signature.
+    |
+    | Set via RAISE_IMPORT_LICENSE_SECRET environment variable.
+    |
+    */
+    'license_secret' => env('RAISE_IMPORT_LICENSE_SECRET', ''),
+
+    /*
+    |--------------------------------------------------------------------------
+    | License Product Slug
+    |--------------------------------------------------------------------------
+    |
+    | Product identifier sent to the license server during verification.
+    | Must match a Product slug configured on raise-license-server.
+    |
+    | Set via RAISE_IMPORT_LICENSE_PRODUCT environment variable.
+    |
+    */
+    'license_product' => env('RAISE_IMPORT_LICENSE_PRODUCT', 'raise-import'),
 
     /*
     |--------------------------------------------------------------------------
@@ -51,6 +81,39 @@ return [
     |
     */
     'force_community' => env('RAISE_IMPORT_FORCE_COMMUNITY', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Integrity Self-Check
+    |--------------------------------------------------------------------------
+    |
+    | Verifies that the Pro gatekeeper files have not been tampered with
+    | (e.g. patched to force Pro mode). If a file's SHA-256 differs from the
+    | expected value, Pro features are refused and the installation silently
+    | falls back to Community mode.
+    |
+    | This is a deterrent, not a hard lock — PHP source is always on the
+    | client's machine. It raises the cost of bypassing the license.
+    |
+    | Regenerate `integrity_hashes` for every release with:
+    |     php artisan raise-import:integrity:rehash
+    |
+    | `integrity_version` must match the installed package version. If it
+    | does not (e.g. an upgrade without a rehash), the check is skipped to
+    | avoid false positives.
+    |
+    | Disable entirely with RAISE_IMPORT_INTEGRITY_DISABLED=true (debugging).
+    |
+    */
+    'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
+
+    'integrity_version' => '1.0.0',
+
+    'integrity_hashes' => [
+        // 'src/License.php' => '...',
+        // 'src/Pro/Actions/ProImportAction.php' => '...',
+        // 'src/RaiseImportServiceProvider.php' => '...',
+    ],
 
     /*
     |--------------------------------------------------------------------------

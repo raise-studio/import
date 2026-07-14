@@ -23,6 +23,12 @@ class RaiseImportServiceProvider extends ServiceProvider
         $this->loadTranslations();
         $this->publishConfig();
 
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                \RaiseStudio\Import\Console\Commands\IntegrityRehashCommand::class,
+            ]);
+        }
+
         if (License::isPro()) {
             $this->bootProFeatures();
         }

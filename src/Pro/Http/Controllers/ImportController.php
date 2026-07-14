@@ -15,7 +15,8 @@ class ImportController extends Controller
 {
     public function __construct()
     {
-        if (!License::isPro()) {
+        // Independent Pro gate — re-validates even if isPro() was patched.
+        if (!License::gatePro()) {
             abort(403, 'This feature requires Raise Import Pro license.');
         }
     }
