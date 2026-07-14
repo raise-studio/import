@@ -20,7 +20,7 @@
         "illuminate/validation": "^10.0|^11.0|^12.0|^13.0",
         "livewire/livewire": "^3.0 || ^4.0",
         "openspout/openspout": "^4.0",
-        "raise-studio/license-client": "v1.0.3-beta.1"
+        "raise-studio/license-client": "^1.0@beta"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0",
