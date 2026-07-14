@@ -18,16 +18,21 @@ return [
     | Uses the raise-studio/license-client SDK for JWT-based license validation.
     | See: https://github.com/raise-studio/raise-license-client-sdk
     |
-    | Environment variables:
-    |   RAISE_IMPORT_LICENSE_KEY      — License activation key (set in .env to auto-activate)
-    |   RAISE_IMPORT_LICENSE_EMAIL    — Email associated with the license (optional)
-    |   RAISE_IMPORT_PUBLIC_KEY       — RSA public key (Base64) for JWT verification
-    |   RAISE_IMPORT_API_URL          — License server API base URL
-    |   RAISE_IMPORT_LICENSE_LOCALE   — 'zh' or 'en'
+    | ======================================================================
+    |  使用者只需在 .env 配置 1 行（其余全部有内置默认值）：
+    |      RAISE_IMPORT_LICENSE_KEY=你拿到的授权码
+    |  插件启动时会自动用该 Key 静默激活，无需后台操作。
+    | ======================================================================
     |
-    | NOTE: Authorization is decided entirely by the ACTUAL domain the site is
-    | accessed through and whether it is bound to a valid license (JWT site_hash).
-    | No config value (APP_ENV / APP_URL / force_community) can grant or deny Pro.
+    | 可选覆盖项（一般不用动）：
+    |   RAISE_IMPORT_LICENSE_EMAIL  — 绑定邮箱（可选）
+    |   RAISE_IMPORT_PUBLIC_KEY     — RSA 公钥；已随包内置，仅升级密钥时覆盖
+    |   RAISE_IMPORT_API_URL        — 授权服务器地址（默认已配好）
+    |   RAISE_IMPORT_LICENSE_LOCALE — 'zh' | 'en'
+    |   RAISE_IMPORT_INTEGRITY_DISABLED — 调试用，生产务必 false
+    |
+    | NOTE: 授权判定完全由「实际访问域名 + 该域名是否绑定有效 License」
+    | 决定，任何配置值（APP_ENV/APP_URL/force_community）都无法绕过。
     |
     */
     'license' => [
