@@ -38,7 +38,7 @@ return [
     'license' => [
         'key'                => env('RAISE_IMPORT_LICENSE_KEY', ''),
         'email'              => env('RAISE_IMPORT_LICENSE_EMAIL', ''),
-        'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'raise-import'),
+        'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'import-for-filament'),
         'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', ''),
         'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
