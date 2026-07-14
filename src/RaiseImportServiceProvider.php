@@ -6,6 +6,11 @@ use Filament\Panel;
 use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Illuminate\Support\ServiceProvider;
+use RaiseStudio\License\FeatureGate;
+use RaiseStudio\License\LicenseClient;
+use RaiseStudio\License\Messages as LicenseMessages;
+use RaiseStudio\License\Adapters\Laravel\LaravelCache;
+use RaiseStudio\License\Adapters\Laravel\LaravelHttp;
 
 class RaiseImportServiceProvider extends ServiceProvider
 {
@@ -15,6 +20,8 @@ class RaiseImportServiceProvider extends ServiceProvider
             __DIR__ . '/../config/raise-import.php',
             'raise-import'
         );
+
+        $this->registerLicenseServices();
     }
 
     public function boot(): void
@@ -29,8 +36,92 @@ class RaiseImportServiceProvider extends ServiceProvider
             ]);
         }
 
+        // Set SDK locale from config
+        $this->bootLicenseLocale();
+
+        // Auto-activate from .env if a license key is configured but not yet stored
+        $this->autoActivateFromEnv();
+
         if (License::isPro()) {
             $this->bootProFeatures();
+        }
+    }
+
+    /**
+     * Register the license-client SDK services into the container.
+     */
+    protected function registerLicenseServices(): void
+    {
+        $this->app->singleton(LicenseClient::class, function () {
+            $license = config('raise-import.license', []);
+
+            return new LicenseClient(
+                $license['product_code'] ?? 'raise-import',
+                $license['public_key_base64'] ?? '',
+                new LaravelCache(),
+                new LaravelHttp(),
+                $license['api_base_url'] ?? 'https://admin.raisestudio.dev/api/v1',
+                config('app.url'),
+            );
+        });
+
+        $this->app->singleton(FeatureGate::class, function ($app) {
+            $gate = new FeatureGate($app->make(LicenseClient::class));
+            $gate->setFreeFeatures(config('raise-import.license.free_features', []));
+            $gate->setAllProFeatures(config('raise-import.license.all_pro_features', []));
+
+            return $gate;
+        });
+    }
+
+    /**
+     * Set the SDK locale to match the application locale.
+     */
+    protected function bootLicenseLocale(): void
+    {
+        $locale = config('raise-import.license.locale', 'zh');
+        LicenseMessages::setLocale($locale);
+    }
+
+    /**
+     * Auto-activate from .env configuration.
+     *
+     * If the user has set RAISE_IMPORT_LICENSE_KEY in their .env file,
+     * this method automatically activates it on the first boot.
+     * No Filament UI needed — just configure and go.
+     */
+    protected function autoActivateFromEnv(): void
+    {
+        // Skip if the container doesn't have the LicenseClient yet
+        if (! $this->app->bound(LicenseClient::class)) {
+            return;
+        }
+
+        $licenseKey = config('raise-import.license.key', '');
+        if (empty($licenseKey)) {
+            return;
+        }
+
+        // Already activated — skip
+        $client = $this->app->make(LicenseClient::class);
+        if ($client->getStoredLicenseKey() !== null) {
+            return;
+        }
+
+        // Attempt auto-activation (silent — no user-facing errors)
+        try {
+            $result = $client->activate(
+                $licenseKey,
+                config('raise-import.license.email', '')
+            );
+
+            if ($result['success']) {
+                logger()->info('[raise-import] License auto-activated from .env');
+            } else {
+                logger()->warning('[raise-import] License auto-activation failed: ' . $result['message']);
+            }
+        } catch (\Throwable $e) {
+            logger()->warning('[raise-import] License auto-activation exception: ' . $e->getMessage());
         }
     }
 

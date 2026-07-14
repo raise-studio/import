@@ -81,7 +81,6 @@ class RaiseImportPlugin implements Plugin
         }
 
         if ($this->withImportLog) {
-            // Apply user customizations to the Resource
             ImportLogResource::applyNavigationConfig(
                 group: $this->navigationGroup,
                 label: $this->navigationLabel,

@@ -2,8 +2,23 @@
 
 namespace RaiseStudio\Import;
 
-use Illuminate\Support\Facades\Http;
+use RaiseStudio\License\Contracts\CacheInterface;
+use RaiseStudio\License\Contracts\HttpClientInterface;
+use RaiseStudio\License\FeatureGate;
+use RaiseStudio\License\LicenseClient;
+use RaiseStudio\License\Adapters\Laravel\LaravelCache;
+use RaiseStudio\License\Adapters\Laravel\LaravelHttp;
 
+/**
+ * Static facade for the raise-studio/license-client SDK.
+ *
+ * Keeps the same public API (isPro(), gatePro(), flushCache(), etc.)
+ * so all existing code continues to work unchanged. The actual license
+ * validation logic is delegated to LicenseClient and FeatureGate.
+ *
+ * When the container does not have LicenseClient registered (e.g., during
+ * tests or early boot), falls back to local-environment detection.
+ */
 class License
 {
     private static ?bool $cache = null;
@@ -13,7 +28,7 @@ class License
      * Check if the current installation has a valid Pro license.
      *
      * Local/dev environments are auto-authorized — no license key needed.
-     * Production environments use online verification with 24-hour cache fallback.
+     * Production environments use SDK's 6-level degradation strategy.
      */
     public static function isPro(): bool
     {
@@ -22,34 +37,23 @@ class License
         }
 
         // Force community mode for testing
-        if (config('raise-import.force_community', false)) {
+        if (config('raise-import.license.force_community', false)) {
             return self::$cache = false;
         }
 
-        // Central (cached) Pro gate: locally exempt OR holds a valid key,
-        // AND the gatekeeper files pass the integrity self-check.
-        return self::$cache = (self::hasValidKey() && self::isIntegrityValid());
-    }
-
-    /**
-     * Distributed-gate primitive: true when the install is locally exempt OR
-     * holds a currently-valid license key (uncached online check). Does NOT
-     * consult the integrity self-check — callers combine it with
-     * isIntegrityValid() to build an independent gate (see gatePro()).
-     */
-    public static function hasValidKey(): bool
-    {
+        // Local environment auto-exemption
         if (self::isLocalEnvironment()) {
-            return true;
+            return self::$cache = true;
         }
 
-        $key = config('raise-import.license_key');
-
-        if (empty($key)) {
-            return false;
+        // Delegates to SDK: FeatureGate::canUse('*') = isPro()
+        $gate = self::resolveFeatureGate();
+        if ($gate !== null) {
+            return self::$cache = $gate->isPro();
         }
 
-        return self::validateOnline($key);
+        // Fallback: no SDK registered — conservative, return false
+        return self::$cache = false;
     }
 
     /**
@@ -58,141 +62,45 @@ class License
      * Unlike isPro() it never reads the static cache, forcing a fresh
      * re-evaluation. This makes a patched isPro() (or its cached result)
      * insufficient to unlock the actual Pro features — each critical file
-     * re-checks on its own. Part of the 2026-07-07 "分布式 gate" strategy.
+     * re-checks on its own. Part of the distributed gate strategy.
      */
     public static function gatePro(): bool
     {
-        if (config('raise-import.force_community', false)) {
+        if (config('raise-import.license.force_community', false)) {
             return false;
         }
 
-        return self::hasValidKey() && self::isIntegrityValid();
-    }
-
-    /**
-     * Validate a license key via online verification server,
-     * with 24-hour cache fallback when the server is unreachable.
-     */
-    private static function validateOnline(string $key): bool
-    {
-        $siteUrl = config('app.url') ?: 'http://localhost';
-        $domain = parse_url($siteUrl, PHP_URL_HOST) ?? 'localhost';
-        $product = config('raise-import.license_product', 'raise-import');
-
-        $verifyUrl = config('raise-import.license_verify_url');
-
-        try {
-            $response = Http::timeout(5)->post($verifyUrl, [
-                'license_key' => $key,
-                'site_url' => $siteUrl,
-                'product' => $product,
-            ]);
-
-            if (!$response->successful()) {
-                return self::validateFromCache($key);
-            }
-
-            $data = $response->json();
-
-            // 1. Server signature must verify — blocks forged/relayed endpoints
-            if (!self::verifyResponseSignature($data)) {
-                return false;
-            }
-
-            // 2. License must be valid for the Pro edition
-            if (!($data['valid'] ?? false) || ($data['edition'] ?? null) !== 'pro') {
-                return false;
-            }
-
-            // 3. Domain lock — the server binds each key to a domain
-            if (!self::isDomainAllowed($data['domain'] ?? null, $domain)) {
-                return false;
-            }
-
-            self::cacheValidation($key);
-
-            return true;
-        } catch (\Exception $e) {
-            // Network error — fall back to 24-hour local cache
-            return self::validateFromCache($key);
-        }
-    }
-
-    /**
-     * Shared HMAC secret used to verify the license server's response
-     * signature. Must match the value configured on raise-license-server.
-     */
-    private static function secret(): string
-    {
-        return (string) config('raise-import.license_secret', '');
-    }
-
-    /**
-     * Verify the HMAC-SHA256 signature returned by the license server.
-     *
-     * Canonical payload: valid|domain|expires_at|edition
-     * Timing-safe comparison prevents signature-timing leaks.
-     */
-    private static function verifyResponseSignature(array $data): bool
-    {
-        $secret = self::secret();
-
-        // No secret configured → cannot trust any positive response.
-        if ($secret === '') {
-            return false;
-        }
-
-        $canonical = sprintf(
-            '%s|%s|%s|%s',
-            var_export($data['valid'] ?? false, true),
-            $data['domain'] ?? '',
-            $data['expires_at'] ?? '',
-            $data['edition'] ?? ''
-        );
-
-        $expected = hash_hmac('sha256', $canonical, $secret);
-
-        return hash_equals($expected, (string) ($data['signature'] ?? ''));
-    }
-
-    /**
-     * Enforce domain binding. The license server returns the domain the key
-     * is bound to. Supports an optional `*.suffix` wildcard so a key issued
-     * for `*.example.com` also validates `app.example.com` but not bare
-     * `example.com`.
-     */
-    private static function isDomainAllowed(?string $boundDomain, string $currentHost): bool
-    {
-        if (empty($boundDomain)) {
-            return false;
-        }
-
-        // Exact match
-        if (strcasecmp($boundDomain, $currentHost) === 0) {
+        if (self::isLocalEnvironment()) {
             return true;
         }
 
-        // Wildcard: *.example.com allows any subdomain of example.com
-        if (str_starts_with($boundDomain, '*.')) {
-            $suffix = substr($boundDomain, 1); // ".example.com"
+        $gate = self::resolveFeatureGate();
 
-            return str_ends_with($currentHost, $suffix)
-                && $currentHost !== ltrim($suffix, '.');
-        }
-
-        return false;
+        return $gate !== null && $gate->isPro();
     }
 
     /**
-     * Verify the integrity of the Pro gatekeeper files.
+     * Check whether a valid license key is configured and active.
      *
-     * Returns true when the check passes OR is skipped (not configured,
-     * explicitly disabled, or version mismatch). Returns false ONLY when a
-     * known file has been tampered with — the caller must then refuse Pro.
+     * Does NOT auto-exempt local environments here — the auto-exemption
+     * is handled by isPro() / gatePro() callers.
+     */
+    public static function hasValidKey(): bool
+    {
+        $client = self::resolveClient();
+        if ($client === null) {
+            return false;
+        }
+
+        return $client->getStoredLicenseKey() !== null || $client->isPro();
+    }
+
+    /**
+     * Verify integrity of Pro gatekeeper files.
      *
-     * This is a deterrent, not a hard lock: PHP source lives on the client's
-     * machine, so a determined attacker can still bypass it. It raises the
-     * cost of patching the license gate.
+     * Uses the SDK's IntegrityCheck under the hood. Returns true when
+     * the check passes OR is skipped (not configured, explicitly disabled).
+     * Returns false ONLY when a known file has been tampered with.
      */
     public static function isIntegrityValid(): bool
     {
@@ -200,27 +108,22 @@ class License
             return self::$integrityCache;
         }
 
-        // Explicit opt-out for legitimate debugging or local patching.
-        if (config('raise-import.integrity_disabled', false)) {
+        if (config('raise-import.license.integrity_disabled', false)) {
             return self::$integrityCache = true;
         }
 
-        $expected = config('raise-import.integrity_hashes', []);
+        $expected = config('raise-import.license.integrity_hashes', []);
         if (!is_array($expected) || $expected === []) {
-            // No hashes shipped — cannot verify, skip gracefully.
             return self::$integrityCache = true;
         }
 
-        // Version guard: if the shipped hashes don't match the installed
-        // package version, skip instead of forcing legitimate users into
-        // Community mode (e.g. after an upgrade without a rehash).
-        $shippedVersion = config('raise-import.integrity_version');
+        $shippedVersion = config('raise-import.license.integrity_version');
         if ($shippedVersion && $shippedVersion !== self::packageVersion()) {
             self::logIntegrity('version mismatch (' . $shippedVersion . ' != ' . self::packageVersion() . '), skipping');
             return self::$integrityCache = true;
         }
 
-        $base = dirname(__DIR__); // package root: src/License.php → ..
+        $base = dirname(__DIR__); // src/License.php → package root
 
         foreach ($expected as $relative => $hash) {
             $absolute = $base . DIRECTORY_SEPARATOR . $relative;
@@ -236,6 +139,97 @@ class License
         }
 
         return self::$integrityCache = true;
+    }
+
+    /**
+     * Flush the cached license check result and SDK in-memory state.
+     */
+    public static function flushCache(): void
+    {
+        self::$cache = null;
+        self::$integrityCache = null;
+
+        // Also flush the SDK's internal memory cache by re-resolving the client
+        if (self::containerReady()) {
+            try {
+                app()->forgetInstance(LicenseClient::class);
+                app()->forgetInstance(FeatureGate::class);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+    }
+
+    /**
+     * Resolve the SDK FeatureGate from the container.
+     * Returns null when the container or SDK instance is unavailable.
+     */
+    private static function resolveFeatureGate(): ?FeatureGate
+    {
+        if (!self::containerReady()) {
+            return null;
+        }
+
+        try {
+            $gate = app(FeatureGate::class);
+            // Ensure free/pro feature lists are set
+            $gate->setFreeFeatures(config('raise-import.license.free_features', []));
+            $gate->setAllProFeatures(config('raise-import.license.all_pro_features', []));
+
+            return $gate;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the SDK LicenseClient from the container.
+     * Returns null when the container or SDK instance is unavailable.
+     */
+    private static function resolveClient(): ?LicenseClient
+    {
+        if (!self::containerReady()) {
+            return null;
+        }
+
+        try {
+            return app(LicenseClient::class);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Check whether the application container is ready for service resolution.
+     */
+    private static function containerReady(): bool
+    {
+        return class_exists(\Illuminate\Support\Facades\App::class)
+            && !app()->runningUnitTests()
+            && app()->bound(LicenseClient::class);
+    }
+
+    /**
+     * Detect if we're running in a local development environment
+     * where license checks should be bypassed.
+     */
+    private static function isLocalEnvironment(): bool
+    {
+        // RAISE_IMPORT_SIMULATE_PRODUCTION: disable local exemption
+        // and fall through to the real license key check below.
+        if (getenv('RAISE_IMPORT_SIMULATE_PRODUCTION')) {
+            return false;
+        }
+
+        // 1. Laravel APP_ENV === 'local'
+        if (app()->environment('local')) {
+            return true;
+        }
+
+        // 2. Loopback host only (this machine)
+        $host = parse_url(config('app.url'), PHP_URL_HOST) ?: 'localhost';
+
+        return in_array($host, ['localhost', '127.0.0.1', '[::1]', '0.0.0.0'], true);
     }
 
     /**
@@ -269,69 +263,5 @@ class License
         } catch (\Throwable $e) {
             // logging must never break the application
         }
-    }
-
-    /**
-     * Cache a successful validation for 24 hours (in-memory + Laravel cache).
-     */
-    private static function cacheValidation(string $key): void
-    {
-        $cacheKey = 'raise_import_license_' . md5($key);
-        $expiresAt = now()->addHours(24);
-
-        cache()->put($cacheKey, [
-            'expires_at' => $expiresAt->timestamp,
-        ], $expiresAt);
-    }
-
-    /**
-     * Validate from 24-hour cache when the verification server is unreachable.
-     */
-    private static function validateFromCache(string $key): bool
-    {
-        $cacheKey = 'raise_import_license_' . md5($key);
-        $cached = cache()->get($cacheKey);
-
-        return $cached && ($cached['expires_at'] ?? 0) > now()->timestamp;
-    }
-
-    /**
-     * Detect if we're running in a local development environment
-     * where license checks should be bypassed.
-     *
-     * When simulate_production env is set, this returns false and the
-     * code falls through to the REAL license key validation — the
-     * exact same code path that runs in production.
-     */
-    private static function isLocalEnvironment(): bool
-    {
-        // ⚠️ RAISE_IMPORT_SIMULATE_PRODUCTION: disable local exemption
-        // and fall through to the real license key check below.
-        // Uses getenv() directly to bypass opcache issues with config/env().
-        if (getenv('RAISE_IMPORT_SIMULATE_PRODUCTION')) {
-            return false;
-        }
-
-        // 1. Laravel APP_ENV === 'local'
-        if (app()->environment('local')) {
-            return true;
-        }
-
-        // 2. Loopback host only (this machine). Network-based exemptions
-        //    such as *.test / *.local TLDs and private IP ranges
-        //    (10.x, 172.16-31.x, 192.168.x) were intentionally removed to
-        //    tighten the free-Pro surface — see 2026-07-07 strategy (收敛豁免).
-        $host = parse_url(config('app.url'), PHP_URL_HOST) ?: 'localhost';
-
-        return in_array($host, ['localhost', '127.0.0.1', '[::1]', '0.0.0.0'], true);
-    }
-
-    /**
-     * Flush the cached license check result.
-     */
-    public static function flushCache(): void
-    {
-        self::$cache = null;
-        self::$integrityCache = null;
     }
 }

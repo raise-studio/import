@@ -12,107 +12,45 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | License Key
+    | License Configuration
     |--------------------------------------------------------------------------
     |
-    | Pro license key. Leave empty for Community mode.
-    | Set via RAISE_IMPORT_LICENSE_KEY environment variable.
+    | Uses the raise-studio/license-client SDK for JWT-based license validation.
+    | See: https://github.com/raise-studio/raise-license-client-sdk
     |
-    | IMPORTANT: Local development environments (localhost, 127.0.0.1,
-    | .local / .test domains, private IPs) are EXEMPT from license checks
-    | and get full Pro features without a key.
+    | Environment variables:
+    |   RAISE_IMPORT_LICENSE_KEY      — License activation key (set in .env to auto-activate)
+    |   RAISE_IMPORT_LICENSE_EMAIL    — Email associated with the license (optional)
+    |   RAISE_IMPORT_PUBLIC_KEY       — RSA public key (Base64) for JWT verification
+    |   RAISE_IMPORT_API_URL          — License server API base URL
+    |   RAISE_IMPORT_FORCE_COMMUNITY  — true to force Community mode
+    |   RAISE_IMPORT_LICENSE_LOCALE   — 'zh' or 'en'
     |
     */
-    'license_key' => env('RAISE_IMPORT_LICENSE_KEY', null),
-
-    /*
-    |--------------------------------------------------------------------------
-    | License Verify URL
-    |--------------------------------------------------------------------------
-    |
-    | URL of the license verification server.
-    | The plugin will POST the license key and domain for validation.
-    |
-    */
-    'license_verify_url' => env(
-        'RAISE_IMPORT_LICENSE_VERIFY_URL',
-        'https://license.raisestudio.dev/api/v1/verify'
-    ),
-
-    /*
-    |--------------------------------------------------------------------------
-    | License Server Shared Secret
-    |--------------------------------------------------------------------------
-    |
-    | Shared HMAC secret used to verify the signature returned by the license
-    | server. MUST match the value configured on raise-license-server.
-    |
-    | Without this secret, the plugin cannot trust any positive verification
-    | response — a forged or relayed endpoint returning `valid:true` will be
-    | rejected because it cannot produce a valid HMAC signature.
-    |
-    | Set via RAISE_IMPORT_LICENSE_SECRET environment variable.
-    |
-    */
-    'license_secret' => env('RAISE_IMPORT_LICENSE_SECRET', ''),
-
-    /*
-    |--------------------------------------------------------------------------
-    | License Product Slug
-    |--------------------------------------------------------------------------
-    |
-    | Product identifier sent to the license server during verification.
-    | Must match a Product slug configured on raise-license-server.
-    |
-    | Set via RAISE_IMPORT_LICENSE_PRODUCT environment variable.
-    |
-    */
-    'license_product' => env('RAISE_IMPORT_LICENSE_PRODUCT', 'raise-import'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Force Community Mode (Testing)
-    |--------------------------------------------------------------------------
-    |
-    | Set to true to force community mode even in local/dev environments.
-    | Useful for testing community feature isolation during development.
-    |
-    | Usage: RAISE_IMPORT_FORCE_COMMUNITY=true in .env
-    |
-    */
-    'force_community' => env('RAISE_IMPORT_FORCE_COMMUNITY', false),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Integrity Self-Check
-    |--------------------------------------------------------------------------
-    |
-    | Verifies that the Pro gatekeeper files have not been tampered with
-    | (e.g. patched to force Pro mode). If a file's SHA-256 differs from the
-    | expected value, Pro features are refused and the installation silently
-    | falls back to Community mode.
-    |
-    | This is a deterrent, not a hard lock — PHP source is always on the
-    | client's machine. It raises the cost of bypassing the license.
-    |
-    | Regenerate `integrity_hashes` for every release with:
-    |     php artisan raise-import:integrity:rehash
-    |
-    | `integrity_version` must match the installed package version. If it
-    | does not (e.g. an upgrade without a rehash), the check is skipped to
-    | avoid false positives.
-    |
-    | Disable entirely with RAISE_IMPORT_INTEGRITY_DISABLED=true (debugging).
-    |
-    */
-    'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
-
-    'integrity_version' => '1.0.0',
-
-    'integrity_hashes' => [
-        // 'src/License.php' => '...',
-        // 'src/Pro/Actions/ProImportAction.php' => '...',
-        // 'src/RaiseImportServiceProvider.php' => '...',
+    'license' => [
+        'key'                => env('RAISE_IMPORT_LICENSE_KEY', ''),
+        'email'              => env('RAISE_IMPORT_LICENSE_EMAIL', ''),
+        'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'raise-import'),
+        'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', ''),
+        'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
+        'force_community'    => env('RAISE_IMPORT_FORCE_COMMUNITY', false),
+        'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
+        'integrity_version'  => '1.0.0',
+        'integrity_hashes'   => [],
+        'locale'             => env('RAISE_IMPORT_LICENSE_LOCALE', 'zh'),
+        'free_features'      => [
+            'basic_import',
+            'csv_support',
+            'excel_support',
+            'auto_mapping',
+        ],
+        'all_pro_features'   => [
+            'advanced_mapping',
+            'queue',
+            'import_log',
+            'merge_split',
+            'pipeline',
+        ],
     ],
 
     /*
