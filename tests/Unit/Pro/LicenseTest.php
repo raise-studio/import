@@ -24,66 +24,106 @@ class LicenseTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * Bind a real request with the given URL so that License resolves the
+     * ACTUAL accessed host from it (mirrors production behavior).
+     */
+    private function setHost(string $url): void
+    {
+        $request = \Illuminate\Http\Request::create($url);
+        $this->app->instance('request', $request);
+    }
+
     /* ---------------------------------------------------------------------
-     | Local environment auto-exemption
+     | Local loopback auto-exemption — decided by the REAL accessed domain
      |--------------------------------------------------------------------- */
 
     /** @test */
-    public function it_returns_true_in_local_environment()
+    public function it_returns_true_when_accessed_via_localhost()
     {
+        $this->setHost('http://localhost');
+
+        $this->assertTrue(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_true_when_accessed_via_127()
+    {
+        $this->setHost('http://127.0.0.1:8000');
+
+        $this->assertTrue(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_true_when_accessed_via_ipv6_loopback()
+    {
+        $this->setHost('http://[::1]:8000');
+
+        $this->assertTrue(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_false_when_accessed_via_local_tld()
+    {
+        // .test / .local style dev domains are NOT exempt — they need a license
+        $this->setHost('http://myapp.test');
+
+        $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_false_when_accessed_via_private_ip()
+    {
+        $this->setHost('http://192.168.1.100');
+
+        $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function it_returns_false_when_accessed_via_real_domain_without_key()
+    {
+        $this->setHost('https://example.com');
+
+        $this->assertFalse(License::isPro());
+    }
+
+    /* ---------------------------------------------------------------------
+     | Config values must NEVER decide (or bypass) authorization
+     |--------------------------------------------------------------------- */
+
+    /** @test */
+    public function app_env_local_does_not_grant_pro_on_real_domain()
+    {
+        // Even with APP_ENV=local, a real domain must NOT be exempt.
         app()['env'] = 'local';
-        config()->set('app.url', 'http://localhost');
-
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_true_for_localhost_domain()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'http://localhost');
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_true_for_127_dot_0_dot_0_dot_1_domain()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'http://127.0.0.1:8000');
-
-        License::flushCache();
-        $this->assertTrue(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_false_for_local_tld_after_tightening()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'http://myapp.test');
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_false_for_private_ip_after_tightening()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'http://192.168.1.100');
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_returns_false_in_production_without_key()
-    {
-        app()['env'] = 'production';
         config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
+        $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function app_url_config_localhost_does_not_grant_pro_on_real_domain()
+    {
+        // Spoofing APP_URL=localhost while accessed via a real domain is ignored.
+        config()->set('app.url', 'http://localhost');
+        $this->setHost('https://example.com');
+
+        License::flushCache();
+        $this->assertFalse(License::isPro());
+    }
+
+    /** @test */
+    public function removed_force_community_config_no_longer_affects_result()
+    {
+        // The force_community config was removed; it must not grant/deny Pro.
+        config()->set('raise-import.license.force_community', true);
+        config()->set('raise-import.force_community', true);
+        $this->setHost('https://example.com');
+
+        License::flushCache();
+        // Without a bound license the result is false regardless of the config.
         $this->assertFalse(License::isPro());
     }
 
@@ -94,12 +134,10 @@ class LicenseTest extends TestCase
     /** @test */
     public function it_returns_true_when_feature_gate_grants_pro()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
-        // Setup mock AFTER flushCache (which clears container instances)
         $gate = $this->getMockBuilder(FeatureGate::class)
             ->disableOriginalConstructor()
             ->onlyMethods(['canUse'])
@@ -113,8 +151,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function it_returns_false_when_feature_gate_denies_pro()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -131,8 +168,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function it_sends_correct_params_to_client_when_checking_pro()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -156,57 +192,31 @@ class LicenseTest extends TestCase
     }
 
     /* ---------------------------------------------------------------------
-     | Force community config
-     |--------------------------------------------------------------------- */
-
-    /** @test */
-    public function it_respects_force_community_config_new_key()
-    {
-        app()['env'] = 'local';
-        config()->set('raise-import.license.force_community', true);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /** @test */
-    public function it_respects_force_community_config_legacy_key()
-    {
-        app()['env'] = 'local';
-        config()->set('raise-import.force_community', true);
-
-        License::flushCache();
-        $this->assertFalse(License::isPro());
-    }
-
-    /* ---------------------------------------------------------------------
      | Static cache behavior
      |--------------------------------------------------------------------- */
 
     /** @test */
     public function it_caches_result_and_does_not_revalidate()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
         $this->assertFalse(License::isPro());
 
-        // Changing env after cache should not affect result
-        app()['env'] = 'local';
+        // Changing the accessed host after caching should not affect result
+        $this->setHost('http://localhost');
         $this->assertFalse(License::isPro());
     }
 
     /** @test */
     public function flush_cache_clears_result()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
         $this->assertFalse(License::isPro());
 
-        app()['env'] = 'local';
+        $this->setHost('http://localhost');
         License::flushCache();
         $this->assertTrue(License::isPro());
     }
@@ -328,8 +338,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function is_pro_degrades_to_community_when_integrity_fails()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -363,8 +372,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function integrity_does_not_affect_is_pro_when_hashes_empty()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -387,8 +395,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function gate_pro_returns_true_when_feature_gate_grants()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -403,21 +410,9 @@ class LicenseTest extends TestCase
     }
 
     /** @test */
-    public function gate_pro_returns_false_when_force_community()
-    {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
-        config()->set('raise-import.force_community', true);
-
-        License::flushCache();
-        $this->assertFalse(License::gatePro());
-    }
-
-    /** @test */
     public function gate_pro_returns_false_when_integrity_broken()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 
@@ -440,8 +435,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function gate_pro_revalidates_independently_of_ispro_cache()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         // isPro() caches false
         License::flushCache();
@@ -463,8 +457,7 @@ class LicenseTest extends TestCase
     /** @test */
     public function gate_pro_returns_false_when_feature_gate_denies()
     {
-        app()['env'] = 'production';
-        config()->set('app.url', 'https://example.com');
+        $this->setHost('https://example.com');
 
         License::flushCache();
 

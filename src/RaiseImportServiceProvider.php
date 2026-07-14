@@ -61,7 +61,7 @@ class RaiseImportServiceProvider extends ServiceProvider
                 new LaravelCache(),
                 new LaravelHttp(),
                 $license['api_base_url'] ?? 'https://admin.raisestudio.dev/api/v1',
-                config('app.url'),
+                $this->resolveSiteUrl(),
             );
         });
 
@@ -72,6 +72,34 @@ class RaiseImportServiceProvider extends ServiceProvider
 
             return $gate;
         });
+    }
+
+    /**
+     * Resolve the site URL actually used to reach this application.
+     *
+     * Prefers the real HTTP request host over config('app.url') so the
+     * license domain binding is checked against the domain the user truly
+     * accesses — not a config value that could be changed to spoof it.
+     */
+    protected function resolveSiteUrl(): string
+    {
+        if (function_exists('request')) {
+            try {
+                $request = request();
+                if ($request !== null && method_exists($request, 'getHost') && $request->getHost() !== '') {
+                    return rtrim($request->getScheme() . '://' . $request->getHost(), '/');
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        if (! empty($_SERVER['HTTP_HOST'])) {
+            $scheme = (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            return rtrim($scheme . '://' . $_SERVER['HTTP_HOST'], '/');
+        }
+
+        return rtrim((string) config('app.url'), '/');
     }
 
     /**

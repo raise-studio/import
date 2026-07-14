@@ -23,8 +23,11 @@ return [
     |   RAISE_IMPORT_LICENSE_EMAIL    — Email associated with the license (optional)
     |   RAISE_IMPORT_PUBLIC_KEY       — RSA public key (Base64) for JWT verification
     |   RAISE_IMPORT_API_URL          — License server API base URL
-    |   RAISE_IMPORT_FORCE_COMMUNITY  — true to force Community mode
     |   RAISE_IMPORT_LICENSE_LOCALE   — 'zh' or 'en'
+    |
+    | NOTE: Authorization is decided entirely by the ACTUAL domain the site is
+    | accessed through and whether it is bound to a valid license (JWT site_hash).
+    | No config value (APP_ENV / APP_URL / force_community) can grant or deny Pro.
     |
     */
     'license' => [
@@ -33,7 +36,6 @@ return [
         'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'raise-import'),
         'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', ''),
         'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
-        'force_community'    => env('RAISE_IMPORT_FORCE_COMMUNITY', false),
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
         'integrity_version'  => '1.0.0',
         'integrity_hashes'   => [],

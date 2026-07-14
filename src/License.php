@@ -36,15 +36,11 @@ class License
             return self::$cache;
         }
 
-        // Force community mode for testing
-        $forceCommunity = config('raise-import.license.force_community', false)
-            ?: config('raise-import.force_community', false); // backward compat
-        if ($forceCommunity) {
-            return self::$cache = false;
-        }
-
-        // Local environment auto-exemption
-        if (self::isLocalEnvironment()) {
+        // Local access (site actually reached via loopback) is auto-authorized.
+        // This is decided by the REAL accessed domain — NOT by APP_ENV or
+        // APP_URL config — so a production server cannot spoof a local bypass
+        // by setting APP_ENV=local or APP_URL=localhost.
+        if (self::isLocalAccess()) {
             return self::$cache = true;
         }
 
@@ -53,7 +49,10 @@ class License
             return self::$cache = false;
         }
 
-        // Delegates to SDK: FeatureGate::canUse('*') = isPro()
+        // Delegates to SDK: FeatureGate::canUse('*') = isPro().
+        // The SDK verifies the actual domain binding (JWT site_hash vs the
+        // real request host), so Pro is granted ONLY when the current domain
+        // is bound to a valid license.
         $gate = self::resolveFeatureGate();
         if ($gate !== null) {
             return self::$cache = $gate->canUse('*');
@@ -73,13 +72,7 @@ class License
      */
     public static function gatePro(): bool
     {
-        $forceCommunity = config('raise-import.license.force_community', false)
-            ?: config('raise-import.force_community', false);
-        if ($forceCommunity) {
-            return false;
-        }
-
-        if (self::isLocalEnvironment()) {
+        if (self::isLocalAccess()) {
             return true;
         }
 
@@ -229,26 +222,65 @@ class License
     }
 
     /**
-     * Detect if we're running in a local development environment
-     * where license checks should be bypassed.
+     * Detect if the site is being accessed through a loopback address,
+     * in which case license checks are bypassed (dev convenience).
+     *
+     * IMPORTANT: the decision is based on the ACTUAL accessed domain
+     * (the real HTTP request host), never on APP_ENV or APP_URL config.
+     * Setting APP_ENV=local on a production domain has no effect.
      */
-    private static function isLocalEnvironment(): bool
+    private static function isLocalAccess(): bool
     {
-        // RAISE_IMPORT_SIMULATE_PRODUCTION: disable local exemption
-        // and fall through to the real license key check below.
+        // RAISE_IMPORT_SIMULATE_PRODUCTION: disable local exemption so the
+        // real license-domain-binding flow is exercised even on loopback.
         if (getenv('RAISE_IMPORT_SIMULATE_PRODUCTION')) {
             return false;
         }
 
-        // 1. Laravel APP_ENV === 'local'
-        if (app()->environment('local')) {
-            return true;
+        $host = self::resolveActualHost();
+
+        return in_array($host, ['localhost', '127.0.0.1', '[::1]'], true);
+    }
+
+    /**
+     * Resolve the host the application is ACTUALLY being accessed through.
+     *
+     * Order of preference:
+     *   1. The real HTTP request host (Request::getHost() / HTTP_HOST)
+     *   2. CGI/CLI server variables
+     *   3. config('app.url') — only as a last resort when no request exists
+     *
+     * We deliberately prefer the real request host over config('app.url'):
+     * the latter is a writable config value and must never be trusted to
+     * decide authorization.
+     */
+    private static function resolveActualHost(): string
+    {
+        // 1. Real request host
+        if (function_exists('request')) {
+            try {
+                $request = request();
+                if ($request !== null && method_exists($request, 'getHost')) {
+                    $host = $request->getHost();
+                    if (is_string($host) && $host !== '') {
+                        return $host;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore — fall through to server vars
+            }
         }
 
-        // 2. Loopback host only (this machine)
-        $host = parse_url(config('app.url'), PHP_URL_HOST) ?: 'localhost';
+        // 2. CGI/CLI server variables
+        if (! empty($_SERVER['HTTP_HOST'])) {
+            $host = parse_url('http://' . $_SERVER['HTTP_HOST'], PHP_URL_HOST);
+            if (is_string($host) && $host !== '') {
+                return $host;
+            }
+        }
 
-        return in_array($host, ['localhost', '127.0.0.1', '[::1]', '0.0.0.0'], true);
+        // 3. Last resort: config('app.url')
+        return parse_url((string) config('app.url'), PHP_URL_HOST) ?: 'localhost';
     }
 
     /**
