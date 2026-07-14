@@ -62,6 +62,8 @@ class RaiseImportServiceProvider extends ServiceProvider
                 new LaravelHttp(),
                 $license['api_base_url'] ?? 'https://admin.raisestudio.dev/api/v1',
                 $this->resolveSiteUrl(),
+                null,
+                $license['public_key_fingerprint'] ?? '',
             );
         });
 

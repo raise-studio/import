@@ -27,6 +27,7 @@ return [
     | 可选覆盖项（一般不用动）：
     |   RAISE_IMPORT_LICENSE_EMAIL  — 绑定邮箱（可选）
     |   RAISE_IMPORT_PUBLIC_KEY     — RSA 公钥；已随包内置，仅升级密钥时覆盖
+    |   RAISE_IMPORT_PUBLIC_KEY_FP  — 公钥指纹锁定（安全加固，可选）；见 tools/public_key_fingerprint.php
     |   RAISE_IMPORT_API_URL        — 授权服务器地址（默认已配好）
     |   RAISE_IMPORT_LICENSE_LOCALE — 'zh' | 'en'
     |   RAISE_IMPORT_INTEGRITY_DISABLED — 调试用，生产务必 false
@@ -40,6 +41,10 @@ return [
         'email'              => env('RAISE_IMPORT_LICENSE_EMAIL', ''),
         'product_code'       => env('RAISE_IMPORT_LICENSE_PRODUCT', 'import-for-filament'),
         'public_key_base64'  => env('RAISE_IMPORT_PUBLIC_KEY', 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0NCk1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBcFVIOTdrRjl0aThjZHhOT00vVDQNCmtoODMwREY3MnMzUlhib2NxQXZKTkhXbzJ0NkJtbk43Zk9aNDNjMTQ0WVNObTd4aFFSSHQyZlVMelNMKy8wRUsNClhRMCtYdEJqTUc3ZS9VaEdtMHRhLy9UdGtLRndwbmV1UGcwckFqa293U3AxRWljN2lxemtHSk9RZTNDa0NsT1MNCkVydFh6UGpSYzZaRUFBRWRpSi8rNUtacFg3TUU0bDNOUUNUWDNxbDg1MzVxanI4ZkJjeTJ4SGJYdm1EMnRXL24NCndpVEJOTHJBQTdobTNjWXkvK0R1MVlacWk5dk03dXpCV2MwanFOK0trbUwzMXNCckFLTTVUYlZBQzdrU2JDRXUNCjBoeXNyaVptNTBXOG5jUWdQZ2pNM05KT2cydW93WlhoSkRZRjF2Q1NOdGg3dXFqaE9zOGo4MDh1UDJha0pNSS8NCk93SURBUUFCDQotLS0tLUVORCBQVUJMSUMgS0VZLS0tLS0NCg=='),
+        // 公钥指纹锁定（可选，安全加固）：填写授权服务器公钥的 SHA-256 指纹后，
+        // 客户端只信任指纹匹配的公钥（抗中间人）。留空=TOFU（首次信任服务器下发公钥）。
+        // 计算方法见 tools/public_key_fingerprint.php
+        'public_key_fingerprint' => env('RAISE_IMPORT_PUBLIC_KEY_FP', ''),
         'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
         'integrity_version'  => '1.0.0',
