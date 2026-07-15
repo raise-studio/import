@@ -46,7 +46,7 @@ return [
         // 客户端只信任指纹匹配的公钥（抗中间人）。留空=TOFU（首次信任服务器下发公钥）。
         // 计算方法见 tools/public_key_fingerprint.php
         'public_key_fingerprint' => env('RAISE_IMPORT_PUBLIC_KEY_FP', ''),
-        'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://admin.raisestudio.dev/api/v1'),
+        'api_base_url'       => env('RAISE_IMPORT_API_URL', 'https://open.raisestudio.dev/api/v1'),
         'integrity_disabled' => env('RAISE_IMPORT_INTEGRITY_DISABLED', false),
         'integrity_version'  => '1.0.0',
         'integrity_hashes'   => [],
