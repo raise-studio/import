@@ -1,6 +1,11 @@
-# Raise Import
+# Raise Import — Import for Filament
 
-> The simplest and most complete CSV/Excel import plugin for Filament.
+> 中文文档: [README.zh-CN.md](README.zh-CN.md)
+
+> Raise Import — Import for Filament: the simplest and most complete CSV/Excel import plugin.
+
+**It solves** the pain of adding production-ready CSV/XLSX/ODS import to a Filament admin panel — upload, automatic column mapping, row-level validation, duplicate handling, and a preview wizard — without you hand-building any of that plumbing. **Hand-writing the equivalent** means wiring up a Livewire upload component, OpenSpout parsing, fuzzy header matching, Laravel validation, batch-insert transactions, and error reporting — typically 200+ lines scattered across several files. **With Raise Import it's one line** (`ImportAction::make()->model(User::class)`), turning roughly a half-day of scaffolding into a minute of configuration.
+
 
 [![Latest Version](https://img.shields.io/packagist/v/raise-studio/import.svg)](https://packagist.org/packages/raise-studio/import)
 [![Total Downloads](https://img.shields.io/packagist/dt/raise-studio/import.svg)](https://packagist.org/packages/raise-studio/import)

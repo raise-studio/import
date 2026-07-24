@@ -1,6 +1,6 @@
 {
     "name": "raise-studio/import",
-    "description": "The simplest and most complete CSV/Excel import plugin for Filament. Supports Filament 4 & 5.",
+    "description": "Raise Import — Import for Filament. The simplest and most complete CSV/Excel import plugin. Supports Filament 4 & 5.",
     "type": "filament-plugin",
     "license": "MIT",
     "authors": [
